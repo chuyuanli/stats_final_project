@@ -1,0 +1,285 @@
+---
+title: "Statistics Final Projet"
+author: "Chuyuan LI"
+date: "12/28/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+`%>%` <- magrittr::`%>%`
+source("project_functions.R")
+```
+
+```{r include=FALSE}
+gib_data <- read.csv("gibsonwu2012data_modified.csv", header = TRUE, sep = ";")
+```
+
+### Data Analysis Problem
+
+This project aims at exploring the difficulty of processing subject-extracted relative clauses (SRCs) and object-extracted relative clauses (ORCs) in Chinese. Intuitively, a longer reading time (rt) means that a relative clause is harder to process.
+The null hypothesis would be that there is no significant difference between the rt process of SRCs and ORCs. 
+
+### Dataset
+
+The dataset used is based on the results from the experiment of Gibson and Wu, which record the reading time at 5 different regions in an item (i.e: a scenario) for 2 types of clauses (subject relative and object relative)*. 
+In the table, the useful columns for this project are:
+
+- participant (1-40, 3 of which are missing)
+- item (1-16, scenario 12 is missing)
+- rt (reading time)
+- region (“de1”, “de”, “dehnoun”, “headnoun”, “headnoun1”)**
+- type2 (subject relative, object relative)
+
+The original dataset records only one type of clause for each participant (i.e: participant 1 doesn't process at the same time SRC and ORC in item x).
+In order to compare the difference of reading time for each participant for each item in both the 2 types of clause, I invented some data to complete my analysis.
+
+
+** typical structures of relative clauses in Chinese: 
+```
+subject relative: V1 N1 de N2 V2
+object relative: N1 V1 de N2 V2
+```
+
+** meaning of the 5 regions: `"de"` the word which introduces the head noun, equals to "that, which" in English, `"de1"`: the word precedes "de" (represents N1 or V1 in the structure above), `"headnoun"`: word right after "de", subject in main clause, could be subject or object in the relative clause (=N2), `"headnoun1"`: word after headnoun, often a verb (=V2), `"dehnoun"`: "de" + "headnoun".
+
+
+### Analysis Roadmap
+
+I will apply the following analysis methodes:
+
+* 1) Data approximation with bootstrapping
+* 2) T-test between bootstrap group and null hypothese group
+* 3) Visualisation
+* 4) Risk assessment
+* 4) Statistical power test
+
+
+#### 1) BOOTSTRAPPING
+
+First show the original distribution of the difference of SRC and ORC reading time among the 5 regions, plot the result:
+
+```{r}
+all_region_diff <- gib_data %>% dplyr::select(participant, item, region, type2, final_rt) %>%
+  tidyr::spread(key = type2, value = final_rt) %>%
+  dplyr::rename(`ORC` = `object relative`, `SRC` = `subject relative`) %>%
+  dplyr::mutate(diff_SRC_ORC = `SRC` - `ORC`)
+
+ggplot2::ggplot(all_region_diff, ggplot2::aes(x=diff_SRC_ORC)) +
+  ggplot2::geom_histogram(binwidth = 1) +
+  ggplot2::facet_grid(region ~ .)
+```
+
+Among all the five regions there is an obvious difference between rt_SRC and rt_ORC. However each region has a different range of difference. 
+Region `de` centered at around 100, `headnoun` around 200, `headnoun` around 20. These three graphes are nearly symmetric, but not strictly normal distributed. 
+Region `de1` and `dehnoun` on the other hand, don't show a symmetric distribution at all. We can tell that in these two regions, SRC reads slowly than ORC, but it is hard to tell to which extend they differ since the data is scatter.
+
+Next doing bootstrap 999 times for each region to stimulate the data distribution. 
+
+```{r, cache=TRUE}
+boots_stats <- all_region_boots_sampling(all_region_diff, N_SAMPLES = 999)
+
+ggplot2::ggplot(boots_stats, ggplot2::aes(x = diff)) +
+  ggplot2::geom_histogram(binwidth=1) +
+  ggplot2::facet_grid(region ~ ., scales = "free") +
+  ggplot2::scale_fill_brewer(palette = "Set1", name = "5 regions") +
+  ggplot2::labs(title="Bootstrap sampling difference rt_SRC and rt_ORC")
+  
+```
+
+
+#### 2) T-TEST & P-VALUE
+
+Under the null hypothesis, there is no significant difference between the 2 clauses reading time. I will stimulate another group of statistics centered at 0 with the same standard deviation.
+
+Calculate the standard deviation of the bootstrap statistics. Since the region `de1` and `dehnoun` are not normally distributed. I will only focus on region `de`, `headnoun` and `headnoun1`.
+
+```{r}
+boots_stats_summary <- boots_stats %>% 
+  dplyr::group_by(region) %>% 
+  dplyr::summarise(total=n(), mean=mean(diff), sd=sd(diff))
+
+nb <- as.numeric(boots_stats_summary[1, "total"])
+```
+
+
+Create statistics under null hypothesis for region `de`:
+
+```{r}
+sd_de = as.numeric(boots_stats_summary[1, "sd"])
+h0_stats_de <- rnorm(nb, mean = 0, sd = sd_de)
+```
+
+T-test for boots_stats and h0_stats for region `de`:
+
+```{r}
+boots_stats_de <- boots_stats %>% dplyr::filter(region == "de")
+x <- as.numeric(boots_stats_de$diff)
+y <- h0_stats_de
+t.test(x, y)
+```
+
+The same process for region `headnoun` and `headnoun1`:
+
+```{r}
+boots_stats_headnoun <- boots_stats %>% dplyr::filter(region == "headnoun")
+h0_stats_headnoun <- rnorm(nb, mean = 0, sd = as.numeric(boots_stats_summary[4, "sd"]))
+t.test(as.numeric(boots_stats_headnoun$diff), h0_stats_headnoun)
+
+boots_stats_headnoun1 <- boots_stats %>% dplyr::filter(region == "headnoun1")
+h0_stats_headnoun1 <- rnorm(nb, mean = 0, sd = as.numeric(boots_stats_summary[5, "sd"]))
+t.test(as.numeric(boots_stats_headnoun1$diff), h0_stats_headnoun1)
+```
+
+
+#### 3) PLOT & INTERPRETATION
+
+Plot the two statistics in region `de`:
+
+```{r}
+h0_stats_de_df <- tibble::tibble(diff = h0_stats_de)
+boots_stats_de_df <- tibble::tibble(diff = boots_stats_de$diff)
+
+ggplot2::ggplot(NULL, ggplot2::aes(x=diff)) + 
+      ggplot2::geom_histogram(data = boots_stats_de_df, fill= "blue", alpha=.4, col="blue", binwidth = 1) +
+      ggplot2::geom_vline(xintercept = mean(boots_stats_de$diff), linetype="dashed", size=0.5) +
+      ggplot2::geom_histogram(data = h0_stats_de_df, fill= "orange", alpha=.4, col="orange", binwidth = 1) +
+      ggplot2::geom_vline(xintercept = mean(h0_stats_de), linetype="dashed", size=0.5)+
+      ggplot2::labs(title="Sampling diff_SRC_ORC region `de`", 
+         subtitle="999 sampling results under null hypo (orange) and bootstrap (blue)")
+
+```
+
+Plot the two statistics in region `headnoun`:
+
+```{r}
+h0_stats_headnoun_df <- tibble::tibble(diff = h0_stats_headnoun)
+boots_stats_headnoun_df <- tibble::tibble(diff = boots_stats_headnoun$diff)
+
+ggplot2::ggplot(NULL, ggplot2::aes(x=diff)) + 
+      ggplot2::geom_histogram(data = boots_stats_headnoun_df, fill= "blue", alpha=.4, col="blue", binwidth = 1) +
+      ggplot2::geom_vline(xintercept = mean(boots_stats_headnoun$diff), linetype="dashed", size=0.5) +
+      ggplot2::geom_histogram(data = h0_stats_headnoun_df, fill= "orange", alpha=.4, col="orange", binwidth = 1) +
+      ggplot2::geom_vline(xintercept = mean(h0_stats_headnoun), linetype="dashed", size=0.5)+
+      ggplot2::labs(title="Sampling diff_SRC_ORC region `headnoun`", 
+         subtitle="999 sampling results under null hypo (orange) and bootstrap (blue)")
+
+```
+
+
+Plot the two statistics in region `headnoun1`:
+
+```{r}
+h0_stats_headnoun1_df <- tibble::tibble(diff = h0_stats_headnoun1)
+boots_stats_headnoun1_df <- tibble::tibble(diff = boots_stats_headnoun1$diff)
+
+ggplot2::ggplot(NULL, ggplot2::aes(x=diff)) + 
+      ggplot2::geom_histogram(data = boots_stats_headnoun1_df, fill= "blue", alpha=.4, col="blue", binwidth = 1) +
+      ggplot2::geom_vline(xintercept = mean(boots_stats_headnoun1$diff), linetype="dashed", size=0.5) +
+      ggplot2::geom_histogram(data = h0_stats_headnoun1_df, fill= "orange", alpha=.4, col="orange", binwidth = 1) +
+      ggplot2::geom_vline(xintercept = mean(h0_stats_headnoun1), linetype="dashed", size=0.5)+
+      ggplot2::labs(title="Sampling diff_SRC_ORC region `headnoun1`", 
+         subtitle="999 sampling results under null hypo (orange) and bootstrap (blue)")
+
+```
+
+
+**Interpretation**
+
+The t-test for the 3 regions all give a p-value < 2.2e-16, which means that there is very little chance to accept the null hypothesis. We could say that the reading time differs in the two relative clauses for these regions. 
+
+
+#### 4) RISK ASSESSMENT
+
+To which extend can I say that reading time for SRC is different from ORC?
+For each bootstrap resampling, I keep track of the p-value with two confident levels (0.05, 0.001). If the p-value is smaller than the confident level, I reject the H0; otherwise I accept it. 
+So that I can estimate my methode empirically by examining the significance decision for a given α.
+
+
+```{r}
+assessment_result <- analysis_assessment(all_region_diff, 999, hypo_mean=0)
+```
+
+Show the summary table:
+
+```{r}
+summary_tests <- assessment_result %>%
+  dplyr::group_by(region) %>%
+  dplyr::summarize(percent_rejectH0_05=mean(decision_05=="reject H0"),
+                   percent_acceptH0_05=mean(decision_05=="accept H0"),
+                   percent_rejectH0_001=mean(decision_001=="reject H0"),
+                   percent_acceptH0_001=mean(decision_001=="accept H0")) %>%
+  dplyr::ungroup()
+knitr::kable(summary_tests)
+```
+
+We notice that under the 2 thresholds of confident level, the percentage of rejecting the null hypothesis stay the same. For each of the five region, we have a 100% confident to say that the reading time between SRC and ORC is different. We thus could generalise the conclusion.
+
+
+#### 5) STATISTICAL POWER
+
+Now reduce the sample size to 10 values for each region, and redo the bootstrapping:
+
+```{r}
+reduce_gib_data <- all_region_diff %>%
+  dplyr::group_by(region) %>%
+  dplyr::filter(dplyr::row_number() <= 10) %>%
+  dplyr::ungroup()
+```
+
+Plot the result:
+
+```{r}
+ggplot2::ggplot(reduce_gib_data, ggplot2::aes(x=diff_SRC_ORC)) +
+  ggplot2::geom_histogram(binwidth = 1) +
+  ggplot2::facet_grid(region ~ .)
+```
+
+
+Re-assessment:
+
+```{r}
+reduce_assessment_result <- analysis_assessment(all_region_diff, 999, hypo_mean=0)
+
+reduce_summary_tests <- reduce_assessment_result %>%
+  dplyr::group_by(region) %>%
+  dplyr::summarize(percent_rejectH0_05=mean(decision_05=="reject H0"),
+                   percent_acceptH0_05=mean(decision_05=="accept H0"),
+                   percent_rejectH0_001=mean(decision_001=="reject H0"),
+                   percent_acceptH0_001=mean(decision_001=="accept H0")) %>%
+  dplyr::ungroup()
+knitr::kable(reduce_summary_tests)
+```
+
+The distribution of data in each region is much more scattered after reduction. But the result of assessment remain the same. 
+We can see that the reading time truly differs between the two relative clauses.
+
+If, I want to go one step further by setting another hypothesis more precise to test the statistical power: the averaged difference between rt_SRC and rt_ORC in region `de` is 100. I would expect to see the change of decision percentage in big data group and a small one.
+
+
+```{r, cache=TRUE}
+de <- all_region_diff %>% dplyr::filter(region=="de")
+assessment_de100 <- analysis_assessment(de, 999, hypo_mean=100) %>%
+  dplyr::mutate(data_size = nrow(de), region = "de")
+
+de_reduce <- reduce_gib_data %>% dplyr::filter(region == "de")
+assessment_de100_reduce <- analysis_assessment(de_reduce, 999, hypo_mean=100) %>%
+  dplyr::mutate(data_size = nrow(de_reduce), region = "de")
+
+summary_de100 <- dplyr::bind_rows(assessment_de100, assessment_de100_reduce) %>%
+  dplyr::group_by(data_size) %>%
+  dplyr::summarize(percent_rejectH0_05=mean(decision_05=="reject H0"),
+                   percent_acceptH0_05=mean(decision_05=="accept H0"),
+                   percent_rejectH0_001=mean(decision_001=="reject H0"),
+                   percent_acceptH0_001=mean(decision_001=="accept H0")) %>%
+  dplyr::ungroup()
+
+knitr::kable(summary_de100)
+```
+
+With a more precise hypothesis, the percentage of rejecting null hypothesis decreases. We are no longer 100% sure. 
+With a smaller data size in the same region, chances are smaller that the averaged difference in reading time IS 100; which makes sense since the data is less centralised, and that we have a higher risk to wrongly estimate this value.
+
+**Conclusion**
+
+By using bootstrap, I succeeded in proving that the reading time for SRC and ORC is different. Under two confident level, I have a very high confident to reject the null hypothesis and the chance to get a type1 error is very small.
+
